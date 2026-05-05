@@ -2,7 +2,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// 💅 Part 2 Fix: url is removed because it's handled in prisma.config.ts
 datasource db {
   provider = "postgresql"
 }
@@ -34,7 +33,7 @@ model User {
   phone            String
   password         String    // Secured by bcrypt
   role             Role      @default(GUEST)
-  resetToken       String?   // For password recovery
+  resetToken       String?   
   resetTokenExpiry DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -42,8 +41,13 @@ model User {
   profile          Profile?
   listings         Listing[]
   bookings         Booking[]
+  reviews          Review[]  // 💅 NEW: Added for Lesson 6
   avatar           String?
   avatarPublicId   String?
+
+  // 💅 NEW: Lesson 6 Performance Indexes
+  @@index([name])
+  @@index([role])
 }
 
 model Profile {
@@ -73,21 +77,22 @@ model Listing {
   host          User           @relation(fields: [hostId], references: [id], onDelete: Cascade)
 
   bookings      Booking[]
+  reviews       Review[]       // 💅 NEW: Added for Lesson 6
   photos        ListingPhoto[]
 
-  // 💅 Part 3: Listing Indexes
+  // 💅 NEW: Lesson 6 Performance Indexes 
   @@index([location])
   @@index([pricePerNight])
   @@index([type])
   @@index([hostId])
-  @@index([type, location]) // Composite index for advanced filtering!
+  @@index([type, location]) 
 }
 
 model Booking {
   id         Int           @id @default(autoincrement())
   checkIn    DateTime
   checkOut   DateTime
-  totalPrice Float
+  totalPrice Float         // Keeping your 'totalPrice' instead of 'total' so old code doesn't break
   status     BookingStatus @default(PENDING)
   createdAt  DateTime      @default(now())
 
@@ -97,10 +102,28 @@ model Booking {
   listingId  Int
   listing    Listing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
-  // 💅 Part 3: Booking Indexes
+  // 💅 NEW: Lesson 6 Performance Indexes
   @@index([guestId])
   @@index([listingId])
-  @@index([listingId, checkIn, checkOut]) // For that atomic conflict check
+  @@index([status])
+  @@index([listingId, checkIn, checkOut]) 
+}
+
+// 💅 NEW MODEL: Added for Lesson 6
+model Review {
+  id        Int      @id @default(autoincrement())
+  rating    Int
+  comment   String
+  createdAt DateTime @default(now())
+
+  guestId   Int      // Using guestId to match your existing naming style
+  guest     User     @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  listingId Int
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([guestId])
+  @@index([listingId])
 }
 
 model ListingPhoto {

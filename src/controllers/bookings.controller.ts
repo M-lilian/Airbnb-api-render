@@ -4,16 +4,33 @@ import { createBookingSchema } from '../validators/bookings.validator';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { sendEmail } from '../config/email';
 import { bookingConfirmationEmail, bookingCancellationEmail } from '../templates/emails';
+import { clearCachePrefix } from '../config/cache'; // 💅 NEW: Cache invalidator
 
 export const getAllBookings = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const bookings = await prisma.booking.findMany({
-      include: {
-        guest: { select: { name: true } },
-        listing: { select: { title: true } }
-      }
+    // 💅 NEW: Pagination setup
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+
+    // 💅 NEW: Promise.all for parallel fetching
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        skip,
+        take: limit,
+        include: {
+          guest: { select: { name: true } },
+          listing: { select: { title: true } }
+        }
+      }),
+      prisma.booking.count()
+    ]);
+
+    // 💅 NEW: Returned with required meta object
+    res.json({
+      data: bookings,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
     });
-    res.json(bookings);
   } catch (error) { next(error); }
 };
 
@@ -42,14 +59,11 @@ export const createBooking = async (req: AuthRequest, res: Response, next: NextF
     const inDate = new Date(checkIn);
     const outDate = new Date(checkOut);
 
-    // 💅 PART 5: THE TRANSACTION GLOW-UP
-    // We wrap the check and the create in a transaction to prevent race conditions.
+    // 💅 PART 5: THE TRANSACTION GLOW-UP (Kept exactly as you wrote it!)
     const newBooking = await prisma.$transaction(async (tx) => {
-      // 1. Check if listing exists (using the transaction client 'tx')
       const listing = await tx.listing.findUnique({ where: { id: listingId } });
       if (!listing) throw new Error("NOT_FOUND");
 
-      // 2. Check for overlapping CONFIRMED bookings
       const conflict = await tx.booking.findFirst({
         where: {
           listingId,
@@ -60,15 +74,12 @@ export const createBooking = async (req: AuthRequest, res: Response, next: NextF
       });
 
       if (conflict) {
-        // This stops the transaction and jumps to our catch block
         throw new Error("BOOKING_CONFLICT");
       }
 
-      // 3. Calculate the damage (totalPrice)
       const days = Math.ceil((outDate.getTime() - inDate.getTime()) / (1000 * 60 * 60 * 24));
       const totalPrice = days * listing.pricePerNight;
 
-      // 4. Create the booking as PENDING
       return tx.booking.create({
         data: {
           listingId,
@@ -78,14 +89,14 @@ export const createBooking = async (req: AuthRequest, res: Response, next: NextF
           totalPrice,
           status: "PENDING"
         },
-        include: { listing: true, guest: true } // Include data needed for email
+        include: { listing: true, guest: true } 
       });
     });
 
-    // If we reached here, the transaction was a success! 
+    clearCachePrefix('bookings_'); // 💅 NEW: Clear cache on success!
     res.status(201).json(newBooking);
 
-    // 📧 Best-effort email (doesn't need to block the response)
+    // 📧 Best-effort email
     try {
       await sendEmail(
         newBooking.guest.email,
@@ -104,7 +115,6 @@ export const createBooking = async (req: AuthRequest, res: Response, next: NextF
     }
 
   } catch (error: any) {
-    // 💅 Catching our custom transaction errors
     if (error.message === "BOOKING_CONFLICT") {
       return res.status(409).json({ error: "These dates are already snatched! Try a different time, bestie." });
     }
@@ -141,6 +151,7 @@ export const deleteBooking = async (req: AuthRequest, res: Response, next: NextF
       data: { status: "CANCELLED" }
     });
 
+    clearCachePrefix('bookings_'); // 💅 NEW: Clear cache on cancel!
     res.json(updatedBooking);
 
     try {

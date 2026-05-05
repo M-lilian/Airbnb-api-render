@@ -3,25 +3,70 @@ import prisma from '../config/prisma';
 import { createListingSchema, updateListingSchema } from '../validators/listings.validator';
 import { AuthRequest } from '../middlewares/auth.middleware'; 
 import { getOptimizedUrl } from '../config/cloudinary';
+import { getCache, setCache, clearCachePrefix } from '../config/cache'; // 💅 NEW: Caching guards
 
-/**
- * 💅 PART 6: RAW QUERY STATS
- * This uses $queryRaw to get grouped statistics directly from the database.
- * We use template literals because Prisma automatically parameterizes them to prevent SQL Injection.
- */
+// 💅 NEW: Search & Filtering Endpoint
+export const searchListings = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { location, type, minPrice, maxPrice, guests, page = '1', limit = '10' } = req.query;
+
+    const pageNumber = parseInt(page as string);
+    const limitNumber = parseInt(limit as string);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const where: any = {};
+
+    if (location) where.location = { contains: location as string, mode: 'insensitive' };
+    if (type) where.type = type as string;
+    if (guests) where.guests = { gte: parseInt(guests as string) }; 
+
+    if (minPrice || maxPrice) {
+      where.pricePerNight = {};
+      if (minPrice) where.pricePerNight.gte = parseFloat(minPrice as string);
+      if (maxPrice) where.pricePerNight.lte = parseFloat(maxPrice as string);
+    }
+
+    const [listings, total] = await Promise.all([
+      prisma.listing.findMany({
+        where,
+        skip,
+        take: limitNumber,
+        include: { host: { select: { name: true, email: true } } }
+      }),
+      prisma.listing.count({ where })
+    ]);
+
+    res.json({
+      data: listings,
+      meta: { total, page: pageNumber, limit: limitNumber, totalPages: Math.ceil(total / limitNumber) }
+    });
+  } catch (error) { next(error); }
+};
+
 export const getListingStats = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const stats = await prisma.$queryRaw`
-      SELECT 
-        location, 
-        COUNT(*)::int AS total, 
-        ROUND(AVG("pricePerNight")::numeric, 2) AS avg_price,
-        MIN("pricePerNight") AS min_price,
-        MAX("pricePerNight") AS max_price
-      FROM "Listing"
-      GROUP BY location
-      ORDER BY total DESC
-    `;
+    // 💅 NEW: Check cache first!
+    const cacheKey = 'listings_stats';
+    const cachedData = getCache(cacheKey);
+    if (cachedData) return res.json(cachedData);
+
+    // 💅 NEW: Using Prisma aggregate & groupBy with Promise.all
+    const [totalListings, priceStats, byLocation, byType] = await Promise.all([
+      prisma.listing.count(),
+      prisma.listing.aggregate({ _avg: { pricePerNight: true } }),
+      prisma.listing.groupBy({ by: ['location'], _count: { location: true } }),
+      prisma.listing.groupBy({ by: ['type'], _count: { type: true } })
+    ]);
+
+    const stats = {
+      totalListings,
+      averagePrice: priceStats._avg.pricePerNight || 0,
+      byLocation,
+      byType
+    };
+
+    // 💅 NEW: Save to cache for 5 minutes (300 seconds)
+    setCache(cacheKey, stats, 300);
     res.json(stats);
   } catch (error) { next(error); }
 };
@@ -32,17 +77,24 @@ export const getAllListings = async (req: Request, res: Response, next: NextFunc
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
 
-    const listings = await prisma.listing.findMany({
-      skip,
-      take: limit,
-      include: {
-        host: { select: { name: true, avatar: true } },
-        _count: { select: { bookings: true } },
-        photos: true 
-      }
-    });
+    // 💅 NEW: Cache the paginated results for 60 seconds
+    const cacheKey = `listings_all_${page}_${limit}`;
+    const cachedData = getCache(cacheKey);
+    if (cachedData) return res.json(cachedData);
 
-    // 💅 Optimize all photos for the feed!
+    const [listings, total] = await Promise.all([
+      prisma.listing.findMany({
+        skip,
+        take: limit,
+        include: {
+          host: { select: { name: true, avatar: true } },
+          _count: { select: { bookings: true } },
+          photos: true 
+        }
+      }),
+      prisma.listing.count()
+    ]);
+
     const formattedListings = listings.map(listing => ({
       ...listing,
       photos: listing.photos.map(photo => ({
@@ -51,7 +103,13 @@ export const getAllListings = async (req: Request, res: Response, next: NextFunc
       }))
     }));
 
-    res.json(formattedListings);
+    const response = {
+      data: formattedListings,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+    };
+
+    setCache(cacheKey, response, 60);
+    res.json(response);
   } catch (error) { next(error); }
 };
 
@@ -61,24 +119,18 @@ export const getListingById = async (req: Request, res: Response, next: NextFunc
       where: { id: parseInt(req.params.id as string) },
       include: {
         host: true,
-        bookings: {
-          include: {
-            guest: { select: { name: true, avatar: true } }
-          }
-        },
+        bookings: { include: { guest: { select: { name: true, avatar: true } } } },
         photos: true 
       }
     });
     
     if (!listing) return res.status(404).json({ error: 'Listing not found' });
 
-    // 🛑 SECURITY PATCH! Scrub the host's password
     if (listing.host) {
       const { password, resetToken, resetTokenExpiry, ...safeHost } = listing.host as any;
       listing.host = safeHost;
     }
 
-    // 💅 Optimize the URLs before sending them to the user
     const formattedListing = {
       ...listing,
       photos: listing.photos.map(photo => ({
@@ -97,11 +149,10 @@ export const createListing = async (req: AuthRequest, res: Response, next: NextF
     if (!result.success) return res.status(400).json({ errors: result.error.issues });
 
     const listing = await prisma.listing.create({ 
-      data: { 
-        ...result.data, 
-        hostId: req.userId as number 
-      } 
+      data: { ...result.data, hostId: req.userId as number } 
     });
+
+    clearCachePrefix('listings_'); // 💅 INVLIDATE CACHE!
     res.status(201).json(listing);
   } catch (error) { next(error); }
 };
@@ -124,6 +175,8 @@ export const updateListing = async (req: AuthRequest, res: Response, next: NextF
       where: { id: listingId },
       data: result.data
     });
+
+    clearCachePrefix('listings_'); // 💅 INVLIDATE CACHE!
     res.json(updatedListing);
   } catch (error) { next(error); }
 };
@@ -140,6 +193,8 @@ export const deleteListing = async (req: AuthRequest, res: Response, next: NextF
     }
 
     await prisma.listing.delete({ where: { id: listingId } });
+    
+    clearCachePrefix('listings_'); // 💅 INVLIDATE CACHE!
     res.status(204).send();
   } catch (error) { next(error); }
 };

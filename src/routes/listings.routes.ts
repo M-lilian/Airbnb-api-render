@@ -1,5 +1,14 @@
 import { Router } from 'express';
-import { getAllListings, getListingById, createListing, updateListing, deleteListing, getListingStats } from '../controllers/listings.controller';
+
+import {
+  getAllListings,
+  getListingById,
+  createListing,
+  updateListing,
+  deleteListing,
+  getListingStats,
+  searchListings,
+} from '../controllers/listings.controller';
 import { authenticate, requireHost } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -8,33 +17,58 @@ const router = Router();
  * @swagger
  * /listings/stats:
  *   get:
- *     summary: Get listing statistics grouped by location
+ *     summary: Get listing statistics grouped by location and type
  *     tags: [Listings]
  *     responses:
  *       200:
- *         description: Listing statistics per location
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   location:
- *                     type: string
- *                     example: Seoul, South Korea
- *                   total:
- *                     type: integer
- *                     example: 3
- *                   avg_price:
- *                     type: number
- *                     example: 450.00
- *                   min_price:
- *                     type: number
- *                     example: 200
- *                   max_price:
- *                     type: number
- *                     example: 500
+ *         description: Listing statistics
+ */
+
+/**
+ * @swagger
+ * /listings/search:
+ *   get:
+ *     summary: Search and filter listings
+ *     tags: [Listings]
+ *     parameters:
+ *       - in: query
+ *         name: location
+ *         schema:
+ *           type: string
+ *         description: Filter by location
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *         description: Filter by type
+ *       - in: query
+ *         name: minPrice
+ *         schema:
+ *           type: number
+ *         description: Minimum price
+ *       - in: query
+ *         name: maxPrice
+ *         schema:
+ *           type: number
+ *         description: Maximum price
+ *       - in: query
+ *         name: guests
+ *         schema:
+ *           type: integer
+ *         description: Minimum guests allowed
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Paginated search results
  */
 
 /**
@@ -49,49 +83,14 @@ const router = Router();
  *         schema:
  *           type: integer
  *           default: 1
- *         description: Page number
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
  *           default: 10
- *         description: Results per page
- *       - in: query
- *         name: location
- *         schema:
- *           type: string
- *         description: Filter by location
- *       - in: query
- *         name: type
- *         schema:
- *           type: string
- *           enum: [APARTMENT, HOUSE, VILLA, CABIN]
- *         description: Filter by listing type
- *       - in: query
- *         name: maxPrice
- *         schema:
- *           type: number
- *         description: Filter by maximum price per night
- *       - in: query
- *         name: sortBy
- *         schema:
- *           type: string
- *         description: Field to sort by
- *       - in: query
- *         name: order
- *         schema:
- *           type: string
- *           enum: [asc, desc]
- *         description: Sort order
  *     responses:
  *       200:
- *         description: List of listings
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Listing'
+ *         description: List of listings with pagination metadata
  */
 
 /**
@@ -106,20 +105,11 @@ const router = Router();
  *         required: true
  *         schema:
  *           type: integer
- *         description: Listing ID
  *     responses:
  *       200:
  *         description: Listing found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Listing'
  *       404:
  *         description: Listing not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -139,22 +129,6 @@ const router = Router();
  *     responses:
  *       201:
  *         description: Listing created
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Listing'
- *       400:
- *         description: Validation error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -171,7 +145,6 @@ const router = Router();
  *         required: true
  *         schema:
  *           type: integer
- *         description: Listing ID
  *     requestBody:
  *       required: true
  *       content:
@@ -181,28 +154,6 @@ const router = Router();
  *     responses:
  *       200:
  *         description: Listing updated
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Listing'
- *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       403:
- *         description: Forbidden - not the listing owner
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       404:
- *         description: Listing not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 
 /**
@@ -219,38 +170,20 @@ const router = Router();
  *         required: true
  *         schema:
  *           type: integer
- *         description: Listing ID
  *     responses:
  *       204:
  *         description: Listing deleted
- *       401:
- *         description: Unauthorized
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       403:
- *         description: Forbidden - not the listing owner
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
- *       404:
- *         description: Listing not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
 
-// IMPORTANT: /stats must be before /:id — otherwise Express matches "stats" as an id
+// 🚨 STATIC ROUTES FIRST (must come before dynamic /:id)
 router.get('/stats', getListingStats);
+router.get('/search', searchListings);
 
-// Public routes
+// PUBLIC ROUTES
 router.get('/', getAllListings);
 router.get('/:id', getListingById);
 
-// Protected routes
+// PROTECTED ROUTES
 router.post('/', authenticate, requireHost, createListing);
 router.put('/:id', authenticate, updateListing);
 router.delete('/:id', authenticate, deleteListing);

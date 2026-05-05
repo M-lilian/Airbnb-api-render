@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { getAllBookings, getBookingById, createBooking, deleteBooking } from '../controllers/bookings.controller';
+
+import {
+  getAllBookings,
+  getBookingById,
+  createBooking,
+  deleteBooking,
+} from '../controllers/bookings.controller';
 import { authenticate, requireGuest } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -167,11 +173,11 @@ const router = Router();
  *               $ref: '#/components/schemas/ErrorResponse'
  */
 
-// Public routes
+// PUBLIC ROUTES
 router.get('/', getAllBookings);
 router.get('/:id', getBookingById);
 
-// Protected routes
+// PROTECTED ROUTES
 router.post('/', authenticate, requireGuest, createBooking);
 router.delete('/:id', authenticate, deleteBooking);
 
