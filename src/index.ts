@@ -3,8 +3,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import { connectDB } from './config/prisma';
 import { PrismaClient, Prisma } from '@prisma/client'; 
 import { setupSwagger } from './config/swagger';
-import compression from 'compression'; // 💅 NEW: Compression for GZIP
-import { generalLimiter, strictLimiter } from './middlewares/rateLimiter'; // 💅 NEW: Security Limiters
+import compression from 'compression';
+import { generalLimiter, strictLimiter } from './middlewares/rateLimiter';
 
 import userRoutes from './routes/users.routes';
 import listingRoutes from './routes/listings.routes';
@@ -16,13 +16,13 @@ import statsRoutes from './routes/stats.routes';
 
 const app = express();
 
-// 1. 💅 NEW: Apply compression to all requests before routes
+// 1. Compression middleware
 app.use(compression());
 
-// 2. 💅 NEW: Apply general rate limiter to all requests
+// 2. General rate limiter (applied to all requests)
 app.use(generalLimiter);
 
-// 3. 💅 NEW: Apply strict rate limiter to all POST/PUT/DELETE routes
+// 3. Strict rate limiter for authentication and mutation endpoints
 app.use('/auth', strictLimiter);
 app.use('/listings', strictLimiter);
 app.use('/bookings', strictLimiter);
@@ -30,7 +30,7 @@ app.use('/reviews', strictLimiter);
 
 app.use(express.json());
 
-// 4. FIRE UP THE SWAGGER DOCS
+// 4. Setup Swagger Docs
 setupSwagger(app);
 
 // 5. Mount Routes
@@ -42,6 +42,12 @@ app.use('/bookings', bookingRoutes);
 app.use('/', reviewRoutes);
 app.use('/', statsRoutes);
 
+// 6. Default route to redirect to Swagger Docs
+app.get('/', (req: Request, res: Response) => {
+  res.redirect('/api-docs');
+});
+
+// 7. Error Handling Middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error(`[Error]: ${err.message}`);
 
