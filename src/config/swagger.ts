@@ -12,7 +12,6 @@ const options: swaggerJSDoc.Options = {
     },
     servers: [
       {
-        // 🚨 THIS IS THE MAGIC FIX FOR RENDER 🚨
         url: 'https://airbnb-api-render.onrender.com',
         description: 'Production Server',
       },
